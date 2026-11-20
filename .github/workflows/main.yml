@@ -1,0 +1,1179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#050b14">
+<title>MyMotoNav Dashboard</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+:root{--bg:#050b14;--panel:#071321;--line:#26384b;--blue:#08a9ff;--green:#00d084;--amber:#ffb020;--red:#ff4757;--muted:#9aabba;--white:#f5f8fc}
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#02060b;color:var(--white);font-family:Arial,Helvetica,sans-serif}
+body{display:flex;align-items:center;justify-content:center}
+.dashboard{width:100vw;height:100dvh;background:linear-gradient(145deg,#07111e,#02060b);display:flex;flex-direction:column;padding:clamp(6px,1.2vw,16px);gap:clamp(6px,1vw,12px)}
+
+/* Dynamic top bar columns: Bike gives room to GPS/speed; Car expands TPMS and shrinks GPS stat */
+.top{height:10.5%;min-height:66px;display:grid;grid-template-columns:.95fr 1.25fr 1.15fr 1.45fr .75fr;align-items:center;background:#030912;border:1px solid #233449;border-radius:13px;padding:5px 10px;gap:4px;transition:grid-template-columns .22s ease}
+.dashboard.car-active .top{grid-template-columns:.88fr .76fr .98fr 2.65fr .7fr}
+
+.stat{height:100%;display:flex;align-items:center;justify-content:center;gap:7px;border-right:1px solid #26384b;min-width:0;transition:all .2s ease}
+.stat:last-child{border:0}.time{font-size:clamp(17px,2.2vw,30px);font-weight:700}
+
+.gps-icon{font-size:clamp(22px,2.7vw,35px);transition:font-size .2s ease,transform .2s ease;flex-shrink:0}
+.dashboard.car-active .gps-icon{font-size:clamp(15px,1.75vw,22px);transform:scale(0.92)}
+
+.small{font-size:clamp(9px,1.05vw,13px);color:#d4deea;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:font-size .2s ease}
+.dashboard.car-active .small{font-size:clamp(8px,.85vw,11px)}
+
+.sat{font-size:clamp(13px,1.45vw,18px);font-weight:700;white-space:nowrap;transition:font-size .2s ease}
+.dashboard.car-active .sat{font-size:clamp(11px,1.15vw,15px)}
+
+.bars{display:flex;align-items:end;gap:3px;height:26px;flex-shrink:0;transition:height .2s ease,gap .2s ease}
+.bars i{width:7px;border-radius:2px;background:var(--green);display:block;transition:width .2s ease,height .2s ease}
+.bars i:nth-child(1){height:9px}.bars i:nth-child(2){height:15px}.bars i:nth-child(3){height:21px}.bars i:nth-child(4){height:26px}
+.dashboard.car-active .bars{height:18px;gap:2px}
+.dashboard.car-active .bars i{width:4px}
+.dashboard.car-active .bars i:nth-child(1){height:6px}
+.dashboard.car-active .bars i:nth-child(2){height:10px}
+.dashboard.car-active .bars i:nth-child(3){height:14px}
+.dashboard.car-active .bars i:nth-child(4){height:18px}
+
+.speed{font-size:clamp(24px,3.5vw,48px);font-weight:800;white-space:nowrap}.speed small{font-size:.34em;color:#b7c7d8}
+
+/* Dynamic TPMS sizing: compact on Bike, wide horizontal spread on Car */
+.tpms{font-weight:700;white-space:nowrap;display:flex;align-items:center;justify-content:center;transition:all .2s ease}
+.tpms.bike-size{gap:6px;padding:0 2px;font-size:clamp(11px,1.35vw,17px)}
+.tpms.car-size{gap:12px;padding:0 10px;width:100%;justify-content:space-between;font-size:clamp(12.5px,1.5vw,19px)}
+.tpms b{color:var(--green)}.tpms b.warn{color:var(--red)}
+.tpms-4grid{display:flex;align-items:center;justify-content:space-evenly;flex:1;gap:clamp(10px,2vw,28px);font-size:clamp(12px,1.35vw,17px);line-height:1.1}
+.tpms-4grid > div{display:flex;align-items:center;gap:4px}
+
+.vehicle-mode-icon{border-radius:10px;border:1px solid #ffb02088;background:#1a1507;color:#fff;display:grid;place-items:center;flex-shrink:0;pointer-events:none;transition:background .15s,border-color .15s,width .2s,height .2s,font-size .2s}
+.tpms.bike-size .vehicle-mode-icon{width:34px;height:34px;font-size:18px}
+.tpms.car-size .vehicle-mode-icon{width:40px;height:40px;font-size:21px;border-color:#08a9ff88;background:#081c2e}
+.vehicle-mode-icon.car-mode{border-color:var(--blue);background:#081c2e}
+
+.battery{font-size:clamp(13px,1.6vw,21px);white-space:nowrap}
+.map-wrap{position:relative;flex:1;min-height:0;border-radius:16px;overflow:hidden;border:1px solid #31475e;background:#13243a}
+#map,#embedMapFrame{width:100%;height:100%;background:#12243b;border:0}
+#embedMapFrame{display:block;width:100%;height:100%;border:0}
+#map{display:none}
+.leaflet-tile-pane{filter:invert(100%) hue-rotate(180deg) brightness(95%) contrast(90%)}
+.turn{position:absolute;z-index:500;top:14px;left:14px;background:#00643fef;border:1px solid #40d7a0;border-radius:12px;padding:12px 16px;width:min(380px,64vw);box-shadow:0 8px 24px #0008}
+.turn .distance{font-size:clamp(24px,3.4vw,44px);font-weight:800}.turn .instruction{font-size:clamp(15px,1.7vw,21px);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.turn .road{border-top:1px solid #ffffff55;margin-top:8px;padding-top:8px;font-size:clamp(12px,1.4vw,18px);display:flex;gap:6px;align-items:center}
+.dest-input{background:#021d13;border:1px solid #40d7a0;color:#fff;border-radius:6px;padding:6px 8px;font-size:13px;width:100%;min-width:0}
+.go-btn{background:#00d084;color:#02160e;border:0;border-radius:6px;padding:6px 10px;font-weight:800;font-size:13px;white-space:nowrap}
+.clear-btn{background:#d9383a;color:#fff;border:0;border-radius:6px;padding:6px 9px;font-weight:800;font-size:13px;display:none}
+.suggest-wrap{position:relative;flex:1;min-width:0}
+.suggest-list{position:absolute;top:calc(100% + 4px);left:0;right:0;z-index:900;background:#071728;border:1px solid #40d7a0;border-radius:8px;max-height:185px;overflow-y:auto;display:none;box-shadow:0 10px 24px #000a}
+.suggest-list.open{display:block}
+.suggest-item{width:100%;text-align:left;background:transparent;border:0;border-bottom:1px solid #1b344c;color:#f5f8fc;padding:8px 10px;font-size:12px;line-height:1.3;display:block}
+.suggest-item:last-child{border-bottom:0}
+.suggest-item:hover{background:#0d2d46}
+.suggest-main{font-weight:700;color:#fff;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.suggest-sub{font-size:11px;color:#9cc0dc;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.widget-toggles{margin-top:8px;padding-top:8px;border-top:1px solid #ffffff33;display:flex;align-items:center;gap:8px}
+.nav-icon-btn{width:40px;height:34px;border-radius:10px;border:1px solid #40d7a0;background:#03261b;color:#fff;font-size:18px;display:grid;place-items:center;flex-shrink:0}
+.nav-icon-btn:hover{background:#06422f}
+.nav-source-label{font-size:12px;font-weight:700;color:#c7f3e3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gmaps-mode-pill{margin-left:auto;display:inline-flex;align-items:center;gap:4px;background:#021d13;border:1px solid #40d7a0;border-radius:999px;padding:2px}
+.gmaps-mode-btn{border:0;background:transparent;color:#c7f3e3;font-size:11px;font-weight:700;padding:4px 8px;border-radius:999px}
+.gmaps-mode-btn.active{background:#00d084;color:#02160e}
+.origin-choice-box{padding:16px;display:flex;flex-direction:column;gap:12px}
+.origin-option-btn{width:100%;text-align:left;padding:12px 14px;border-radius:12px;border:1px solid #35506b;background:#0d2136;color:#f5f8fc;font-weight:700;font-size:14px;display:flex;align-items:center;gap:10px}
+.origin-option-btn:hover,.origin-option-btn.selected{border-color:#08a9ff;background:#122e4b}
+.origin-field-wrap{display:none;flex-direction:column;gap:8px;margin-top:4px}
+.origin-field-wrap.open{display:flex}
+.origin-input{width:100%;padding:10px 12px;border-radius:10px;border:1px solid #456078;background:#050f1a;color:#fff;font-size:14px}
+.origin-suggest-list{position:relative;top:0;max-height:150px;border-color:#08a9ff}
+.origin-confirm-btn{align-self:flex-end;padding:9px 16px;border-radius:10px;border:0;background:#00d084;color:#02160e;font-weight:800;font-size:13px}
+.map-wrap.nav-3d-active #map,
+.map-wrap.nav-3d-active #embedMapFrame{
+  transform:perspective(920px) rotateX(28deg) scale(1.14);
+  transform-origin:50% 78%;
+  transition:transform .45s cubic-bezier(.22,.8,.36,1);
+}
+.trip{position:absolute;z-index:500;bottom:14px;left:14px;background:#06111eeF;border:1px solid #52677e;border-radius:12px;padding:10px 16px;font-size:clamp(14px,1.7vw,22px);font-weight:700}
+.trip strong{color:var(--green);font-size:1.25em}.trip .mode-tag{display:inline-block;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--amber);margin-bottom:2px}
+.map-actions{position:absolute;right:14px;top:14px;z-index:500;display:flex;flex-direction:column;gap:8px}
+.map-actions button{width:46px;height:46px;border:1px solid #71849a;background:#071321dd;color:white;border-radius:50%;font-size:25px}
+.bottom{height:17%;min-height:100px;background:linear-gradient(100deg,#071625,#020b17);border:1px solid #456078;border-radius:18px;display:grid;grid-template-columns:minmax(160px,1.5fr) 1.3fr 1.2fr;align-items:center;padding:8px 14px;gap:10px}
+.track{display:flex;align-items:center;gap:12px;min-width:0}
+.cover{width:clamp(54px,7.5vw,92px);aspect-ratio:1;border-radius:12px;background:linear-gradient(145deg,#08a9ff,#5a315e 55%,#111c31);border:2px solid #456078;display:grid;place-items:center;font-size:clamp(24px,3.2vw,40px);flex-shrink:0;cursor:pointer;transition:transform .15s}
+.cover:active{transform:scale(0.94)}
+.trackname{font-size:clamp(13px,1.7vw,21px);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.artist{font-size:clamp(11px,1.3vw,16px);color:#9eafc2;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.app-badge{display:inline-flex;align-items:center;gap:6px;margin-top:5px;background:#0d2136;border:1px solid #35506b;color:#66c7ff;border-radius:12px;padding:3px 10px;font-size:11px;font-weight:700;cursor:pointer}
+.controls{display:flex;align-items:center;justify-content:space-evenly;border-left:1px solid #34495f;border-right:1px solid #34495f;height:75%}
+.controls button,.volume button{border:0;background:transparent;color:#f4f8fc;font-size:clamp(22px,3vw,38px);cursor:pointer}
+.controls .play{width:clamp(52px,6vw,76px);height:clamp(52px,6vw,76px);border:3px solid var(--blue);border-radius:50%;font-size:clamp(22px,2.8vw,34px)}
+.volume{display:flex;align-items:center;justify-content:center;gap:10px}.volume input{width:65%;accent-color:var(--blue)}
+button{cursor:pointer}
+#file{display:none}
+.notice{position:absolute;z-index:600;bottom:14px;right:14px;background:#06111eea;border:1px solid #33495e;padding:8px 12px;border-radius:8px;color:#bdc9d6;font-size:12px;max-width:46%;display:none}
+
+/* Picker Modals */
+.modal-backdrop{position:fixed;inset:0;z-index:1000;background:#02060bcc;backdrop-filter:blur(4px);display:none;align-items:center;justify-content:center;padding:16px}
+.modal{background:#081626;border:1px solid #456078;border-radius:18px;width:min(480px,92vw);max-height:80vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 16px 40px #000c}
+.modal-header{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid #26384b;font-size:18px;font-weight:700}
+.modal-close{background:#15283d;border:1px solid #35506b;color:#fff;border-radius:50%;width:32px;height:32px;font-size:16px}
+.app-grid{padding:14px;display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;overflow-y:auto}
+.app-card{background:#0d2136;border:1px solid #314b66;border-radius:12px;padding:12px 10px;display:flex;flex-direction:column;align-items:center;gap:8px;color:#f5f8fc;font-weight:700;font-size:13px;text-align:center;transition:.15s}
+.app-card:hover,.app-card.active{border-color:#08a9ff;background:#122e4b}
+.app-card .icon{font-size:28px}
+
+/* Rearranged Portrait Layout (Both Automatic & Preview Toggle) */
+.dashboard.portrait-mode,.dashboard.portrait-preview{padding:10px;gap:10px}
+
+/* Top bar: Row 1 = Clock | Speed | Battery; Row 2 = GPS Signal | TPMS + Bike/Car Icon */
+.dashboard.portrait-mode .top,.dashboard.portrait-preview .top,
+.dashboard.portrait-mode.car-active .top,.dashboard.portrait-preview.car-active .top{
+  height:auto;
+  min-height:unset;
+  grid-template-columns:1fr 1.2fr .9fr;
+  grid-template-rows:auto auto;
+  gap:8px;
+  padding:9px 11px;
+}
+.dashboard.portrait-mode .top .stat,.dashboard.portrait-preview .top .stat{
+  height:auto;
+  min-height:36px;
+  border-right:0;
+  border-bottom:1px solid #233449;
+  padding-bottom:7px;
+  justify-content:center;
+}
+.dashboard.portrait-mode .top .time,.dashboard.portrait-preview .top .time{grid-column:1;grid-row:1;justify-content:flex-start}
+.dashboard.portrait-mode .top .stat:nth-child(3),.dashboard.portrait-preview .top .stat:nth-child(3){grid-column:2;grid-row:1;justify-content:center}
+.dashboard.portrait-mode .top .battery,.dashboard.portrait-preview .top .battery{grid-column:3;grid-row:1;justify-content:flex-end}
+
+.dashboard.portrait-mode .top .gps-stat,.dashboard.portrait-preview .top .gps-stat{
+  grid-column:1;
+  grid-row:2;
+  border-bottom:0;
+  padding-bottom:0;
+  justify-content:flex-start;
+  gap:5px;
+}
+.dashboard.portrait-mode .top .tpms,.dashboard.portrait-preview .top .tpms{
+  grid-column:2 / span 2;
+  grid-row:2;
+  border-bottom:0;
+  padding-bottom:0;
+  justify-content:space-between;
+  gap:8px;
+}
+.dashboard.portrait-mode .tpms-4grid,.dashboard.portrait-preview .tpms-4grid{
+  justify-content:space-between;
+  gap:6px;
+  font-size:12px;
+}
+
+/* Map overlays rearranged: Turn card at top, Map action icons in a neat horizontal strip below turn card */
+.dashboard.portrait-mode .turn,.dashboard.portrait-preview .turn{
+  top:10px;
+  left:10px;
+  right:10px;
+  width:auto;
+  padding:10px 12px;
+}
+.dashboard.portrait-mode .turn .distance,.dashboard.portrait-preview .turn .distance{font-size:22px}
+.dashboard.portrait-mode .turn .instruction,.dashboard.portrait-preview .turn .instruction{font-size:14px}
+
+.dashboard.portrait-mode .map-actions,.dashboard.portrait-preview .map-actions{
+  top:auto;
+  bottom:12px;
+  right:10px;
+  left:auto;
+  flex-direction:column;
+  gap:6px;
+}
+.dashboard.portrait-mode .map-actions button,.dashboard.portrait-preview .map-actions button{
+  width:38px;
+  height:38px;
+  font-size:18px;
+}
+.dashboard.portrait-mode .trip,.dashboard.portrait-preview .trip{
+  display:flex;
+  flex-direction:column;
+  bottom:12px;
+  left:10px;
+  padding:8px 11px;
+  font-size:13px;
+  max-width:calc(100% - 66px);
+}
+
+/* Bottom bar rearranged: Row 1 = Track + Music Icon; Row 2 = Transport Controls + Volume Slider */
+.dashboard.portrait-mode .bottom,.dashboard.portrait-preview .bottom{
+  height:auto;
+  min-height:116px;
+  grid-template-columns:1.15fr 1fr;
+  grid-template-rows:auto auto;
+  padding:10px 12px;
+  gap:10px;
+}
+.dashboard.portrait-mode .bottom .track,.dashboard.portrait-preview .bottom .track{
+  grid-column:1 / -1;
+  grid-row:1;
+}
+.dashboard.portrait-mode .bottom .controls,.dashboard.portrait-preview .bottom .controls{
+  grid-column:1;
+  grid-row:2;
+  border-left:0;
+  border-right:1px solid #34495f;
+  height:auto;
+  padding-right:8px;
+  justify-content:space-between;
+}
+.dashboard.portrait-mode .bottom .controls .play,.dashboard.portrait-preview .bottom .controls .play{
+  width:46px;
+  height:46px;
+  font-size:20px;
+}
+.dashboard.portrait-mode .bottom .controls button,.dashboard.portrait-preview .bottom .controls button{
+  font-size:20px;
+}
+.dashboard.portrait-mode .bottom .volume,.dashboard.portrait-preview .bottom .volume{
+  grid-column:2;
+  grid-row:2;
+  justify-content:flex-end;
+  gap:6px;
+}
+.dashboard.portrait-mode .bottom .volume input,.dashboard.portrait-preview .bottom .volume input{width:72%}
+
+@media (orientation: portrait){
+  .dashboard{padding:10px;gap:10px}
+  .top,.dashboard.car-active .top{
+    height:auto;
+    min-height:unset;
+    grid-template-columns:1fr 1.2fr .9fr;
+    grid-template-rows:auto auto;
+    gap:8px;
+    padding:9px 11px;
+  }
+  .top .stat{
+    height:auto;
+    min-height:36px;
+    border-right:0;
+    border-bottom:1px solid #233449;
+    padding-bottom:7px;
+    justify-content:center;
+  }
+  .top .time{grid-column:1;grid-row:1;justify-content:flex-start}
+  .top .stat:nth-child(3){grid-column:2;grid-row:1;justify-content:center}
+  .top .battery{grid-column:3;grid-row:1;justify-content:flex-end}
+  .top .gps-stat{grid-column:1;grid-row:2;border-bottom:0;padding-bottom:0;justify-content:flex-start;gap:5px}
+  .top .tpms{grid-column:2 / span 2;grid-row:2;border-bottom:0;padding-bottom:0;justify-content:space-between;gap:8px}
+  .tpms-4grid{justify-content:space-between;gap:6px;font-size:12px}
+
+  .turn{top:10px;left:10px;right:10px;width:auto;padding:10px 12px}
+  .turn .distance{font-size:22px}
+  .turn .instruction{font-size:14px}
+  .map-actions{top:auto;bottom:12px;right:10px;left:auto;flex-direction:column;gap:6px}
+  .map-actions button{width:38px;height:38px;font-size:18px}
+  .trip{display:flex;flex-direction:column;bottom:12px;left:10px;padding:8px 11px;font-size:13px;max-width:calc(100% - 66px)}
+
+  .bottom{
+    height:auto;
+    min-height:116px;
+    grid-template-columns:1.15fr 1fr;
+    grid-template-rows:auto auto;
+    padding:10px 12px;
+    gap:10px;
+  }
+  .bottom .track{grid-column:1 / -1;grid-row:1}
+  .bottom .controls{grid-column:1;grid-row:2;border-left:0;border-right:1px solid #34495f;height:auto;padding-right:8px;justify-content:space-between}
+  .bottom .controls .play{width:46px;height:46px;font-size:20px}
+  .bottom .controls button{font-size:20px}
+  .bottom .volume{grid-column:2;grid-row:2;justify-content:flex-end;gap:6px}
+  .bottom .volume input{width:72%}
+}
+@media(max-width:850px){.turn{top:7px;left:7px;padding:8px 10px;width:min(320px,70vw)}.trip{display:none}}
+</style>
+</head>
+<body>
+<main class="dashboard" id="dashboardRoot">
+ <header class="top">
+  <div class="stat time" id="clock">--:--</div>
+  <div class="stat gps-stat" id="gpsStat"><span class="gps-icon" id="gpsSignalIcon">🛰</span><div><div class="sat" id="gpsState">GPS OFF</div><div class="small" id="satCount">Searching GNSS...</div></div><div class="bars" id="gpsBars"><i></i><i></i><i></i><i></i></div></div>
+  <div class="stat"><span style="color:#28baff;font-size:25px">◉</span><div class="speed"><span id="speed">0</span><small> km/h</small></div></div>
+  <div class="stat tpms bike-size" id="tpmsContainer">
+    <span id="tpmsLeadIcon">◉</span>
+    <div id="tpmsBikeView">
+      <span>F: <b id="frontPsi">--</b> psi</span>
+      <span style="color:#60758a;margin:0 4px">|</span>
+      <span>R: <b id="rearPsi">--</b> psi</span>
+    </div>
+    <div id="tpmsCarView" class="tpms-4grid" style="display:none">
+      <div>FL: <b id="flPsi">--</b></div>
+      <div>FR: <b id="frPsi">--</b></div>
+      <div>RL: <b id="rlPsi">--</b></div>
+      <div>RR: <b id="rrPsi">--</b></div>
+    </div>
+    <span id="vehicleModeIcon" class="vehicle-mode-icon" aria-label="Vehicle Mode Indicator">🏍️</span>
+  </div>
+  <div class="stat battery">▰ <span id="battery">--</span></div>
+ </header>
+
+ <section class="map-wrap">
+  <div id="map"></div>
+  <iframe id="embedMapFrame" title="Google Maps Interface" allow="geolocation" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
+
+  <div class="turn">
+    <div class="distance" id="navDist">📍 &nbsp;GOOGLE MAPS</div>
+    <div class="instruction" id="navInstr">Full map controls &amp; search on screen</div>
+    <div class="road">
+      <div class="suggest-wrap">
+        <input id="destInput" class="dest-input" type="text" autocomplete="off" placeholder="Search place or destination in Google Maps...">
+        <div id="destSuggestList" class="suggest-list"></div>
+      </div>
+      <button id="launchNav" class="go-btn">GO</button>
+      <button id="clearNav" class="clear-btn" title="Reset Map">✕</button>
+    </div>
+
+    <div class="widget-toggles">
+      <button id="navIconBtn" class="nav-icon-btn" title="Select Map Provider">📍</button>
+      <span class="nav-source-label" id="navSourceLabel">Google Maps</span>
+      <div class="gmaps-mode-pill" id="gmapsModePill" title="Google Maps Travel Mode">
+        <button type="button" class="gmaps-mode-btn active" id="gmaps2wBtn" data-mode="motorcycle">🏍️ 2W</button>
+        <button type="button" class="gmaps-mode-btn" id="gmaps4wBtn" data-mode="car">🚗 4W</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="trip">
+    <div class="mode-tag" id="modeBadge">🏍️ MOTORCYCLE MODE</div>
+    <strong id="eta">GPS</strong><br>
+    <span id="tripDistance">Waiting for location</span>
+  </div>
+  <div class="map-actions" id="mapActions"><button id="north" title="Reset north">N</button><button id="zoomIn">+</button><button id="zoomOut">−</button><button id="locate" title="Locate me">◎</button><button id="portraitToggleBtn" title="Toggle Portrait Preview">📱</button></div>
+  <div class="notice" id="notice"></div>
+ </section>
+
+ <footer class="bottom">
+  <div class="track">
+    <button class="cover" id="musicIconBtn" title="Choose Music App">♪</button>
+    <div style="min-width:0;flex:1">
+      <div class="trackname" id="trackName">Tap ♪ to Choose Music App</div>
+      <div class="artist" id="artistName">Installed players ready</div>
+      <button class="app-badge" id="activeAppBadge">🎵 Select Music App ▾</button>
+      <input id="file" type="file" accept="audio/*">
+    </div>
+  </div>
+  <div class="controls">
+    <button id="prev" title="Previous">|◀</button>
+    <button class="play" id="play">▶</button>
+    <button id="next" title="Next">▶|</button>
+  </div>
+  <div class="volume"><button id="muteBtn" aria-label="Volume">🔊</button><input id="volume" type="range" min="0" max="1" step=".01" value=".7"></div>
+  <audio id="audio"></audio>
+ </footer>
+</main>
+
+<!-- Installed Navigation App Picker Modal -->
+<div class="modal-backdrop" id="navModal">
+  <div class="modal">
+    <div class="modal-header">
+      <span>Select Navigation App</span>
+      <button class="modal-close" id="closeNavModal">✕</button>
+    </div>
+    <div class="app-grid" id="navAppList"></div>
+  </div>
+</div>
+
+<!-- Installed Music App Picker Modal -->
+<div class="modal-backdrop" id="musicModal">
+  <div class="modal">
+    <div class="modal-header">
+      <span>Select Music App</span>
+      <button class="modal-close" id="closeMusicModal">✕</button>
+    </div>
+    <div class="app-grid" id="musicAppList"></div>
+  </div>
+</div>
+
+<!-- Origin Selection Modal for GO -->
+<div class="modal-backdrop" id="originModal">
+  <div class="modal">
+    <div class="modal-header">
+      <span>Select Starting Origin</span>
+      <button class="modal-close" id="closeOriginModal">✕</button>
+    </div>
+    <div class="origin-choice-box">
+      <button type="button" class="origin-option-btn" id="useCurrentLocationBtn">
+        <span>◎</span>
+        <span>Current Location</span>
+      </button>
+      <button type="button" class="origin-option-btn" id="chooseCustomOriginBtn">
+        <span>📌</span>
+        <span>Select Custom Origin</span>
+      </button>
+      <div class="origin-field-wrap" id="customOriginWrap">
+        <div class="suggest-wrap">
+          <input type="text" id="customOriginInput" class="origin-input" autocomplete="off" placeholder="Enter starting point / origin...">
+          <div id="originSuggestList" class="suggest-list origin-suggest-list"></div>
+        </div>
+        <button type="button" id="confirmCustomOriginBtn" class="origin-confirm-btn">Start 3D Route</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+
+function resolveAndroidBridge() {
+  const candidates = [
+    window.AndroidBridge,
+    window.NativeBridge,
+    window.WebViewBridge,
+    window.Bridge,
+    window.android,
+    window.nativeApp
+  ];
+  for (const bridge of candidates) {
+    if (bridge && typeof bridge === 'object') {
+      return bridge;
+    }
+  }
+  return null;
+}
+
+const getAndroidBridge = () => resolveAndroidBridge();
+const hasAndroidBridge = () => !!resolveAndroidBridge();
+
+const VEHICLE_PROFILES = {
+  motorcycle: {
+    icon: '🏍️',
+    label: '🏍️ MOTORCYCLE MODE',
+    btnTitle: 'Dashboard Mode: Bike (Tap to switch to Car)',
+    avgSpeedKmh: 42,
+    routeColor: '#00d084',
+    googleDirFlag: 'l',
+    minFrontPsi: 26,
+    minRearPsi: 30
+  },
+  car: {
+    icon: '🚗',
+    label: '🚗 CAR MODE',
+    btnTitle: 'Dashboard Mode: Car (Tap to switch to Bike)',
+    avgSpeedKmh: 50,
+    routeColor: '#08a9ff',
+    googleDirFlag: 'd',
+    minFrontPsi: 30,
+    minRearPsi: 32
+  }
+};
+
+let selectedVehicle = localStorage.getItem('mymotonav_vehicle') || 'motorcycle';
+let selectedNavPkg = localStorage.getItem('mymotonav_nav_pkg') || 'gmaps';
+let selectedNavName = localStorage.getItem('mymotonav_nav_name') || 'Google Maps';
+let selectedAudioPkg = localStorage.getItem('mymotonav_audio_pkg') || 'local';
+let selectedAudioName = localStorage.getItem('mymotonav_audio_name') || 'Local File';
+let isExternalPlaying = false;
+let currentLat = 17.3850, currentLon = 78.4867;
+let activeOriginText = '';
+let pendingDestinationText = '';
+let is3dNavigationActive = false;
+let tpmsState = { f: null, r: null, fl: null, fr: null, rl: null, rr: null };
+let activeRoute = null, routeLine = null, destMarker = null;
+
+// Clock
+function tick(){ $('clock').textContent=new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',hour12:false}); }
+tick();setInterval(tick,1000);
+
+// Map Setup (Google Maps Embedded Interface Default + OSM Fallback)
+const map=L.map('map',{zoomControl:false}).setView([currentLat,currentLon],13);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OSM'}).addTo(map);
+let marker=null,accuracy=null,last=null,watchId=null;
+
+function syncGoogleMapsModeButtons(){
+  const isCar = selectedVehicle === 'car';
+  $('gmaps2wBtn').classList.toggle('active', !isCar);
+  $('gmaps4wBtn').classList.toggle('active', isCar);
+}
+
+function buildGoogleMapsUrl(queryText, lat, lon, vehicleMode, originText = ''){
+  const travelMode = vehicleMode === 'car' ? 'driving' : 'two-wheeler';
+  const dest = (queryText || '').trim();
+  const origin = (originText || '').trim();
+
+  if(dest && origin){
+    return `https://www.google.com/maps?saddr=${encodeURIComponent(origin)}&daddr=${encodeURIComponent(dest)}&travelmode=${encodeURIComponent(travelMode)}&output=embed`;
+  }
+  if(dest){
+    return `https://www.google.com/maps?saddr=${encodeURIComponent(`${lat},${lon}`)}&daddr=${encodeURIComponent(dest)}&travelmode=${encodeURIComponent(travelMode)}&output=embed`;
+  }
+  return `https://www.google.com/maps?q=${lat},${lon}&z=15&travelmode=${encodeURIComponent(travelMode)}&output=embed`;
+}
+
+function loadGoogleMapsInterface(queryText = '', originText = activeOriginText){
+  const frame = $('embedMapFrame');
+  $('map').style.display = 'none';
+  $('mapActions').style.display = 'none';
+  frame.style.display = 'block';
+  syncGoogleMapsModeButtons();
+
+  const url = buildGoogleMapsUrl(queryText, currentLat, currentLon, selectedVehicle, originText);
+  if(frame.src !== url){
+    frame.src = url;
+  }
+
+  const modeLabel = selectedVehicle === 'car' ? '4W Car' : '2W Bike';
+  if(queryText){
+    const fromLabel = originText ? originText : 'Current Location';
+    $('navDist').innerHTML = `🧭 &nbsp;3D ${modeLabel}`;
+    $('navInstr').textContent = `${fromLabel} → ${queryText}`;
+    $('clearNav').style.display = 'inline-block';
+  } else {
+    $('navDist').innerHTML = `📍 &nbsp;GOOGLE MAPS (${modeLabel})`;
+    $('navInstr').textContent = 'Use Google Maps 2W/4W controls & search on screen';
+    $('clearNav').style.display = 'none';
+  }
+}
+
+function set3dNavigationPerspective(enabled){
+  is3dNavigationActive = !!enabled;
+  const wrap = document.querySelector('.map-wrap');
+  if(wrap){
+    wrap.classList.toggle('nav-3d-active', is3dNavigationActive);
+  }
+}
+
+async function fetchPlaceSuggestions(query){
+  const trimmed = (query || '').trim();
+  if(trimmed.length < 2) return [];
+  try {
+    const viewbox = `${currentLon-1.5},${currentLat+1.5},${currentLon+1.5},${currentLat-1.5}`;
+    const url = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=5&viewbox=${viewbox}&q=${encodeURIComponent(trimmed)}`;
+    const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+    const data = await res.json();
+    if(!Array.isArray(data)) return [];
+    return data.map(item => {
+      const parts = (item.display_name || '').split(',').map(s => s.trim()).filter(Boolean);
+      return {
+        main: parts[0] || trimmed,
+        sub: parts.slice(1, 3).join(', ') || 'Map Place',
+        full: item.display_name || trimmed,
+        lat: parseFloat(item.lat),
+        lon: parseFloat(item.lon)
+      };
+    });
+  } catch (err) {
+    return [];
+  }
+}
+
+function renderSuggestionList(listEl, items, onSelectItem){
+  listEl.innerHTML = '';
+  if(!items || items.length === 0){
+    listEl.classList.remove('open');
+    return;
+  }
+  items.forEach(item => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'suggest-item';
+    btn.innerHTML = `<span class="suggest-main">${item.main}</span><span class="suggest-sub">${item.sub}</span>`;
+    btn.onclick = () => {
+      onSelectItem(item);
+      listEl.classList.remove('open');
+    };
+    listEl.appendChild(btn);
+  });
+  listEl.classList.add('open');
+}
+
+let destSuggestTimer = null;
+$('destInput').addEventListener('input', e => {
+  const val = e.target.value;
+  clearTimeout(destSuggestTimer);
+  if(val.trim().length < 2){
+    $('destSuggestList').classList.remove('open');
+    return;
+  }
+  destSuggestTimer = setTimeout(async () => {
+    const items = await fetchPlaceSuggestions(val);
+    renderSuggestionList($('destSuggestList'), items, chosen => {
+      $('destInput').value = chosen.main;
+    });
+  }, 240);
+});
+
+let originSuggestTimer = null;
+$('customOriginInput').addEventListener('input', e => {
+  const val = e.target.value;
+  clearTimeout(originSuggestTimer);
+  if(val.trim().length < 2){
+    $('originSuggestList').classList.remove('open');
+    return;
+  }
+  originSuggestTimer = setTimeout(async () => {
+    const items = await fetchPlaceSuggestions(val);
+    renderSuggestionList($('originSuggestList'), items, chosen => {
+      $('customOriginInput').value = chosen.main;
+    });
+  }, 240);
+});
+
+document.addEventListener('click', e => {
+  if(!$('destInput').contains(e.target) && !$('destSuggestList').contains(e.target)){
+    $('destSuggestList').classList.remove('open');
+  }
+  if(!$('customOriginInput').contains(e.target) && !$('originSuggestList').contains(e.target)){
+    $('originSuggestList').classList.remove('open');
+  }
+});
+
+function haversine(lat1, lon1, lat2, lon2){
+  const R = 6371000;
+  const toRad = d => d * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function formatDist(meters){
+  if(!Number.isFinite(meters) || meters <= 0) return '0 m';
+  if(meters >= 1000) return `${(meters / 1000).toFixed(1)} km`;
+  return `${Math.round(meters)} m`;
+}
+
+function formatDuration(seconds){
+  if(!Number.isFinite(seconds) || seconds <= 0) return '--';
+  const mins = Math.round(seconds / 60);
+  if(mins < 60) return `${mins} min`;
+  const hrs = Math.floor(mins / 60);
+  const remMins = mins % 60;
+  return remMins ? `${hrs}h ${remMins}m` : `${hrs}h`;
+}
+
+function getManeuverArrow(type, modifier){
+  const m = (modifier || '').toLowerCase();
+  if(type === 'arrive') return '🏁';
+  if(m.includes('sharp left')) return '↰';
+  if(m.includes('sharp right')) return '↱';
+  if(m.includes('slight left') || m.includes('left')) return '↖';
+  if(m.includes('slight right') || m.includes('right')) return '↗';
+  if(m.includes('uturn')) return '↩';
+  return '↑';
+}
+
+let noticeTimer = null;
+function showNotice(message){
+  const box = $('notice');
+  if(!box) return;
+  box.textContent = message;
+  box.style.display = 'block';
+  clearTimeout(noticeTimer);
+  noticeTimer = setTimeout(() => {
+    box.style.display = 'none';
+  }, 3600);
+}
+
+async function startOsmRoute(query, customOrigin = ''){
+  $('navDist').innerHTML = '⏳ &nbsp;NAVIGATING';
+  $('navInstr').textContent = 'Starting route...';
+  try {
+    const viewbox = `${currentLon-1},${currentLat+1},${currentLon+1},${currentLat-1}`;
+    let startLat = currentLat;
+    let startLon = currentLon;
+    let startLabel = 'Current Location';
+
+    if(customOrigin && customOrigin.trim()){
+      const originRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&viewbox=${viewbox}&q=${encodeURIComponent(customOrigin.trim())}`);
+      const originData = await originRes.json();
+      if(originData && originData.length > 0){
+        startLat = parseFloat(originData[0].lat);
+        startLon = parseFloat(originData[0].lon);
+        startLabel = originData[0].display_name.split(',')[0];
+      }
+    }
+
+    const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&viewbox=${viewbox}&q=${encodeURIComponent(query)}`);
+    const geoData = await geoRes.json();
+    if(!geoData || geoData.length === 0){
+      showNotice('Destination not found.');
+      clearOsmRoute();
+      return;
+    }
+    const destLat = parseFloat(geoData[0].lat);
+    const destLon = parseFloat(geoData[0].lon);
+    const destName = geoData[0].display_name.split(',')[0];
+
+    const profileKey = selectedVehicle === 'car' ? 'driving' : 'cycling';
+    const routeUrl = `https://router.project-osrm.org/route/v1/${profileKey}/${startLon},${startLat};${destLon},${destLat}?overview=full&geometries=geojson&steps=true`;
+    const routeRes = await fetch(routeUrl);
+    const routeData = await routeRes.json();
+    if(routeData.code !== 'Ok' || !routeData.routes.length){
+      showNotice('Could not calculate route.');
+      clearOsmRoute();
+      return;
+    }
+
+    const route = routeData.routes[0];
+    activeRoute = { steps: route.legs[0].steps, destLat, destLon, destName, startLabel };
+
+    if(routeLine) map.removeLayer(routeLine);
+    if(destMarker) map.removeLayer(destMarker);
+
+    const profile = VEHICLE_PROFILES[selectedVehicle];
+    const coords = route.geometry.coordinates.map(c => [c[1], c[0]]);
+    routeLine = L.polyline(coords, {color: profile.routeColor, weight: 6, opacity: 0.9}).addTo(map);
+    destMarker = L.marker([destLat, destLon]).addTo(map).bindPopup(destName);
+    map.fitBounds(routeLine.getBounds(), {padding: [60, 60]});
+
+    $('clearNav').style.display = 'inline-block';
+    updateActiveNavigation(startLat, startLon);
+  } catch (err) {
+    showNotice('Routing error: Check internet connection.');
+    clearOsmRoute();
+  }
+}
+
+function beginNavigationSession(destination, originText){
+  const modeLabel = selectedVehicle === 'car' ? '4W' : '2W';
+  const fromLabel = originText && originText.trim() ? originText.trim() : 'Current Location';
+
+  $('destSuggestList').classList.remove('open');
+  $('originSuggestList').classList.remove('open');
+  $('clearNav').style.display = 'inline-block';
+  $('navDist').innerHTML = `🧭 &nbsp;3D ${modeLabel} ACTIVE`;
+  $('navInstr').textContent = `${fromLabel} → ${destination}`;
+  $('eta').textContent = '3D LIVE';
+  $('tripDistance').textContent = `3D Route to ${destination}`;
+  set3dNavigationPerspective(true);
+
+  if(selectedNavPkg === 'gmaps'){
+    loadGoogleMapsInterface(destination, originText);
+  }
+  startOsmRoute(destination, originText);
+}
+
+function updateActiveNavigation(lat, lon){
+  if(!activeRoute) return;
+  const profile = VEHICLE_PROFILES[selectedVehicle];
+  let closestIdx = 0, minDist = Infinity;
+  activeRoute.steps.forEach((step, idx) => {
+    const [mLon, mLat] = step.maneuver.location;
+    const d = haversine(lat, lon, mLat, mLon);
+    if(d < minDist){ minDist = d; closestIdx = idx; }
+  });
+
+  const targetIdx = (minDist < 25 && closestIdx + 1 < activeRoute.steps.length) ? closestIdx + 1 : closestIdx;
+  const step = activeRoute.steps[targetIdx];
+  const [tLon, tLat] = step.maneuver.location;
+  const distToTurn = haversine(lat, lon, tLat, tLon);
+
+  const arrow = getManeuverArrow(step.maneuver.type, step.maneuver.modifier);
+  const roadName = step.name ? ` onto ${step.name}` : '';
+  const action = step.maneuver.type === 'arrive'
+    ? `Arrive at ${activeRoute.destName}`
+    : `${(step.maneuver.modifier || step.maneuver.type).replace('-', ' ')}${roadName}`;
+
+  $('navDist').innerHTML = `${arrow} &nbsp;${formatDist(distToTurn)}`;
+  $('navInstr').textContent = action.charAt(0).toUpperCase() + action.slice(1);
+
+  const remDist = haversine(lat, lon, activeRoute.destLat, activeRoute.destLon) * 1.25;
+  const estSecs = (remDist / 1000) / profile.avgSpeedKmh * 3600;
+  $('eta').textContent = formatDuration(estSecs);
+  $('tripDistance').textContent = `${formatDist(remDist)} to ${activeRoute.destName}`;
+}
+
+function clearOsmRoute(){
+  activeRoute = null;
+  activeOriginText = '';
+  pendingDestinationText = '';
+  set3dNavigationPerspective(false);
+  if(routeLine){ map.removeLayer(routeLine); routeLine = null; }
+  if(destMarker){ map.removeLayer(destMarker); destMarker = null; }
+  if(selectedNavPkg === 'gmaps'){
+    $('destInput').value = '';
+    loadGoogleMapsInterface('', '');
+  } else {
+    $('clearNav').style.display = 'none';
+    $('navDist').innerHTML = '🧭 &nbsp;OSM MAP';
+    $('navInstr').textContent = 'Enter destination or ride';
+    $('eta').textContent = 'GPS FIX';
+  }
+}
+$('clearNav').onclick = clearOsmRoute;
+
+// --- IN-DASHBOARD MAP PROVIDER SWITCHER ---
+function getInstalledNavApps(){
+  return [
+    { name: 'Google Maps', packageName: 'gmaps', icon: '📍' },
+    { name: 'OSM In-App', packageName: 'osm', icon: '🗺️' }
+  ];
+}
+
+function openNavAppPicker(){
+  const list = $('navAppList');
+  list.innerHTML = '';
+  const apps = getInstalledNavApps();
+
+  apps.forEach(app => {
+    const card = document.createElement('button');
+    card.className = 'app-card' + (app.packageName === selectedNavPkg ? ' active' : '');
+    card.innerHTML = `<span class="icon">${app.icon || '📍'}</span><span>${app.name}</span>`;
+    card.onclick = () => selectAndLaunchNavApp(app);
+    list.appendChild(card);
+  });
+
+  $('navModal').style.display = 'flex';
+}
+
+function selectAndLaunchNavApp(app){
+  $('navModal').style.display = 'none';
+  selectedNavPkg = app.packageName;
+  selectedNavName = app.name;
+  localStorage.setItem('mymotonav_nav_pkg', app.packageName);
+  localStorage.setItem('mymotonav_nav_name', app.name);
+  $('navSourceLabel').textContent = app.name;
+
+  if(app.packageName === 'gmaps'){
+    loadGoogleMapsInterface($('destInput').value.trim());
+    return;
+  }
+
+  $('embedMapFrame').style.display = 'none';
+  $('map').style.display = 'block';
+  $('mapActions').style.display = 'flex';
+  map.invalidateSize();
+  $('navDist').innerHTML = '🧭 &nbsp;OSM MAP';
+  $('navInstr').textContent = 'Enter destination or ride';
+}
+
+$('navIconBtn').onclick = openNavAppPicker;
+$('closeNavModal').onclick = () => $('navModal').style.display = 'none';
+$('navModal').onclick = e => { if(e.target === $('navModal')) $('navModal').style.display = 'none'; };
+$('navSourceLabel').textContent = selectedNavName;
+
+function openOriginPickerModal(destination){
+  pendingDestinationText = destination;
+  $('customOriginWrap').classList.remove('open');
+  $('useCurrentLocationBtn').classList.remove('selected');
+  $('chooseCustomOriginBtn').classList.remove('selected');
+  $('customOriginInput').value = activeOriginText || '';
+  $('originModal').style.display = 'flex';
+}
+
+function closeOriginPickerModal(){
+  $('originModal').style.display = 'none';
+}
+
+$('closeOriginModal').onclick = closeOriginPickerModal;
+$('originModal').onclick = e => { if(e.target === $('originModal')) closeOriginPickerModal(); };
+
+$('useCurrentLocationBtn').onclick = () => {
+  $('useCurrentLocationBtn').classList.add('selected');
+  $('chooseCustomOriginBtn').classList.remove('selected');
+  $('customOriginWrap').classList.remove('open');
+  activeOriginText = '';
+  closeOriginPickerModal();
+  beginNavigationSession(pendingDestinationText, '');
+};
+
+$('chooseCustomOriginBtn').onclick = () => {
+  $('chooseCustomOriginBtn').classList.add('selected');
+  $('useCurrentLocationBtn').classList.remove('selected');
+  $('customOriginWrap').classList.add('open');
+  $('customOriginInput').focus();
+};
+
+$('confirmCustomOriginBtn').onclick = () => {
+  const customOrigin = $('customOriginInput').value.trim();
+  if(!customOrigin){
+    showNotice('Please enter an origin location.');
+    return;
+  }
+  activeOriginText = customOrigin;
+  closeOriginPickerModal();
+  beginNavigationSession(pendingDestinationText, activeOriginText);
+};
+
+$('launchNav').onclick = () => {
+  const dest = $('destInput').value.trim();
+  if(!dest){
+    showNotice('Enter a destination first.');
+    return;
+  }
+  openOriginPickerModal(dest);
+};
+// --- DYNAMIC INSTALLED MUSIC APP PICKER ---
+function getInstalledMusicApps(){
+  const bridge = getAndroidBridge();
+  if(bridge && typeof bridge.getInstalledMusicApps === 'function'){
+    try {
+      const parsed = JSON.parse(bridge.getInstalledMusicApps());
+      if(Array.isArray(parsed) && parsed.length > 0) return parsed;
+    } catch(e) {}
+  }
+  return [
+    { name: 'YouTube Music', packageName: 'com.google.android.apps.youtube.music', icon: '▶️' },
+    { name: 'Amazon Music', packageName: 'com.amazon.mp3', icon: '🎧' },
+    { name: 'Spotify', packageName: 'com.spotify.music', icon: '🟢' },
+    { name: 'Local Audio File', packageName: 'local', icon: '📁' }
+  ];
+}
+
+function openMusicAppPicker(){
+  const list = $('musicAppList');
+  list.innerHTML = '';
+  const apps = getInstalledMusicApps();
+
+  apps.forEach(app => {
+    const card = document.createElement('button');
+    card.className = 'app-card' + (app.packageName === selectedAudioPkg ? ' active' : '');
+    card.innerHTML = `<span class="icon">${app.icon || '🎵'}</span><span>${app.name}</span>`;
+    card.onclick = () => selectAndLaunchMusicApp(app);
+    list.appendChild(card);
+  });
+
+  $('musicModal').style.display = 'flex';
+}
+
+function selectAndLaunchMusicApp(app){
+  $('musicModal').style.display = 'none';
+  selectedAudioPkg = app.packageName;
+  selectedAudioName = app.name;
+  localStorage.setItem('mymotonav_audio_pkg', app.packageName);
+  localStorage.setItem('mymotonav_audio_name', app.name);
+  $('activeAppBadge').textContent = `🎵 ${app.name} ▾`;
+
+  if(app.packageName === 'local'){
+    $('file').click();
+    return;
+  }
+
+  $('audio').pause();
+  $('trackName').textContent = `${app.name}`;
+  $('artistName').textContent = 'Start playback in app, then return here';
+
+  const bridge = getAndroidBridge();
+  if(bridge && typeof bridge.launchPackage === 'function'){
+    bridge.launchPackage(app.packageName);
+  } else {
+    showNotice(`Selected ${app.name}. Connect a native bridge in Native App AI to launch & control external music apps.`);
+  }
+}
+
+$('musicIconBtn').onclick = openMusicAppPicker;
+$('activeAppBadge').onclick = openMusicAppPicker;
+$('closeMusicModal').onclick = () => $('musicModal').style.display = 'none';
+$('musicModal').onclick = e => { if(e.target === $('musicModal')) $('musicModal').style.display = 'none'; };
+
+if(selectedAudioName && selectedAudioName !== 'Local File'){
+  $('activeAppBadge').textContent = `🎵 ${selectedAudioName} ▾`;
+}
+
+// Local audio fallback
+const audio=$('audio');
+$('file').addEventListener('change',e=>{
+  const f=e.target.files[0];
+  if(!f)return;
+  selectedAudioPkg = 'local';
+  selectedAudioName = 'Local File';
+  $('activeAppBadge').textContent = '🎵 Local File ▾';
+  audio.src=URL.createObjectURL(f);
+  $('trackName').textContent=f.name;
+  $('artistName').textContent='Local Device Storage';
+  audio.play().then(()=>$('play').textContent='Ⅱ').catch(()=>{});
+});
+
+// Unified Media Controls
+$('play').onclick=()=>{
+  const bridge = getAndroidBridge();
+  if(selectedAudioPkg !== 'local'){
+    if(bridge && typeof bridge.sendMediaCommand === 'function'){
+      bridge.sendMediaCommand('play_pause');
+      isExternalPlaying = !isExternalPlaying;
+      $('play').textContent = isExternalPlaying ? 'Ⅱ' : '▶';
+    } else {
+      showNotice('Native bridge required to control external music apps.');
+    }
+    return;
+  }
+  if(!audio.src){ openMusicAppPicker(); return; }
+  if(audio.paused){audio.play();$('play').textContent='Ⅱ';}else{audio.pause();$('play').textContent='▶';}
+};
+
+$('prev').onclick=()=>{
+  const bridge = getAndroidBridge();
+  if(selectedAudioPkg !== 'local' && bridge && typeof bridge.sendMediaCommand === 'function') bridge.sendMediaCommand('prev');
+  else audio.currentTime=0;
+};
+
+$('next').onclick=()=>{
+  const bridge = getAndroidBridge();
+  if(selectedAudioPkg !== 'local' && bridge && typeof bridge.sendMediaCommand === 'function') bridge.sendMediaCommand('next');
+  else audio.currentTime=audio.duration||0;
+};
+
+$('volume').oninput=e=>{
+  const val = Number(e.target.value);
+  audio.volume = val;
+  const bridge = getAndroidBridge();
+  if(bridge && typeof bridge.setSystemVolume === 'function'){
+    bridge.setSystemVolume(Math.round(val * 100));
+  }
+};
+
+audio.onplay=()=> $('play').textContent='Ⅱ';
+audio.onpause=()=> $('play').textContent='▶';
+
+// --- NATIVE ANDROID CALLBACK HOOKS ---
+window.updateTrackInfo = function(title, artist, playing, appName){
+  $('trackName').textContent = title || 'Playing';
+  $('artistName').textContent = artist || (appName ? `via ${appName}` : '');
+  if(appName) $('activeAppBadge').textContent = `🎵 ${appName} ▾`;
+  isExternalPlaying = !!playing;
+  $('play').textContent = isExternalPlaying ? 'Ⅱ' : '▶';
+};
+
+window.updateGpsSatellites = function(used, total){
+  $('satCount').textContent = `Satellites: ${used}/${total} fixed`;
+};
+
+// --- GPS & SPEEDOMETER ---
+function updateSpeed(kmh){$('speed').textContent=Math.max(0,Math.round(kmh||0));}
+function onPosition(pos){
+ const c=pos.coords,lat=c.latitude,lon=c.longitude;
+ const movedEnough = haversine(currentLat, currentLon, lat, lon) > 150;
+ currentLat = lat; currentLon = lon;
+ $('gpsState').textContent='GPS ACTIVE';
+ let kmh=Number.isFinite(c.speed)&&c.speed>=0?c.speed*3.6:0;
+ if((!c.speed||c.speed===0)&&last){
+   const dt=(pos.timestamp-last.t)/1000;
+   if(dt>0) kmh = (haversine(last.lat, last.lon, lat, lon) / dt) * 3.6;
+ }
+ last={lat,lon,t:pos.timestamp};updateSpeed(kmh);
+ if(!marker){marker=L.marker([lat,lon]).addTo(map).bindPopup('Your location');map.setView([lat,lon],16);}else marker.setLatLng([lat,lon]);
+ if(accuracy){map.removeLayer(accuracy)}accuracy=L.circle([lat,lon],{radius:c.accuracy,color:'#08a9ff',weight:1,fillOpacity:.06}).addTo(map);
+
+ if(selectedNavPkg === 'gmaps' && !$('destInput').value.trim() && movedEnough){
+   loadGoogleMapsInterface('', activeOriginText);
+ }
+
+ if(activeRoute){
+   updateActiveNavigation(lat, lon);
+ } else {
+   $('tripDistance').textContent='Accuracy ±'+Math.round(c.accuracy)+' m';
+   $('eta').textContent='GPS FIX';
+ }
+}
+function startGPS(){
+ if(!navigator.geolocation){showNotice('GPS not supported.');return;}
+ if(watchId!==null)return;
+ watchId=navigator.geolocation.watchPosition(onPosition,e=>{showNotice('GPS error: '+e.message);$('gpsState').textContent='GPS ERROR';},{enableHighAccuracy:true,maximumAge:1000,timeout:15000});
+}
+$('locate').onclick=()=>{
+  startGPS();
+  if(selectedNavPkg === 'gmaps'){
+    loadGoogleMapsInterface($('destInput').value.trim(), activeOriginText);
+    return;
+  }
+  if(marker)map.setView(marker.getLatLng(),16);
+};
+$('north').onclick=()=>map.setBearing?map.setBearing(0):map.setView(map.getCenter(),map.getZoom());
+$('zoomIn').onclick=()=>map.zoomIn();$('zoomOut').onclick=()=>map.zoomOut();startGPS();
+
+// Portrait Mode Auto-Sync & Preview Toggle
+let portraitPreviewForced = false;
+function applyOrientationLayout(){
+  const isSystemPortrait = window.matchMedia && window.matchMedia('(orientation: portrait)').matches;
+  const root = $('dashboardRoot');
+  root.classList.toggle('portrait-mode', isSystemPortrait);
+  root.classList.toggle('portrait-preview', portraitPreviewForced);
+  $('portraitToggleBtn').style.borderColor = portraitPreviewForced ? '#08a9ff' : '#71849a';
+  $('portraitToggleBtn').style.background = portraitPreviewForced ? '#0b2c48' : '#071321dd';
+  setTimeout(() => map.invalidateSize(), 180);
+}
+$('portraitToggleBtn').onclick = () => {
+  portraitPreviewForced = !portraitPreviewForced;
+  applyOrientationLayout();
+};
+window.addEventListener('resize', applyOrientationLayout);
+applyOrientationLayout();
+
+// Battery
+if(navigator.getBattery){navigator.getBattery().then(b=>{const paint=()=>$('battery').textContent=Math.round(b.level*100)+'%';paint();b.addEventListener('levelchange',paint);}).catch(()=>{});}else $('battery').textContent='N/A';
+
+function paintTpms(elId, val, minPsi){
+  const el = $(elId);
+  if(!el) return;
+  if(val === null || val === undefined || Number.isNaN(Number(val))){
+    el.textContent = '--';
+    el.classList.remove('warn');
+    return;
+  }
+  const num = Number(val);
+  el.textContent = num.toFixed(1);
+  el.classList.toggle('warn', num > 0 && num < minPsi);
+}
+
+function refreshTpmsDisplay(){
+  const isCar = selectedVehicle === 'car';
+  const profile = VEHICLE_PROFILES[selectedVehicle] || VEHICLE_PROFILES.motorcycle;
+  $('tpmsBikeView').style.display = isCar ? 'none' : 'block';
+  $('tpmsCarView').style.display = isCar ? 'flex' : 'none';
+  paintTpms('frontPsi', tpmsState.f, profile.minFrontPsi);
+  paintTpms('rearPsi', tpmsState.r, profile.minRearPsi);
+  paintTpms('flPsi', tpmsState.fl, profile.minFrontPsi);
+  paintTpms('frPsi', tpmsState.fr, profile.minFrontPsi);
+  paintTpms('rlPsi', tpmsState.rl, profile.minRearPsi);
+  paintTpms('rrPsi', tpmsState.rr, profile.minRearPsi);
+}
+
+function setVehicleMode(mode){
+  selectedVehicle = VEHICLE_PROFILES[mode] ? mode : 'motorcycle';
+  localStorage.setItem('mymotonav_vehicle', selectedVehicle);
+  const profile = VEHICLE_PROFILES[selectedVehicle];
+  const isCar = selectedVehicle === 'car';
+
+  const root = $('dashboardRoot');
+  const tpmsBox = $('tpmsContainer');
+  const modeIcon = $('vehicleModeIcon');
+  if(root) root.classList.toggle('car-active', isCar);
+  if(tpmsBox){
+    tpmsBox.classList.toggle('car-size', isCar);
+    tpmsBox.classList.toggle('bike-size', !isCar);
+  }
+  if(modeIcon){
+    modeIcon.textContent = profile.icon;
+    modeIcon.classList.toggle('car-mode', isCar);
+  }
+  if($('modeBadge')) $('modeBadge').textContent = profile.label;
+  syncGoogleMapsModeButtons();
+  refreshTpmsDisplay();
+
+  if(selectedNavPkg === 'gmaps'){
+    const currentDest = $('destInput') ? $('destInput').value.trim() : '';
+    loadGoogleMapsInterface(currentDest, activeOriginText);
+  }
+}
+
+window.setTpms = function(front, rear){
+  tpmsState.f = front;
+  tpmsState.r = rear;
+  refreshTpmsDisplay();
+};
+
+window.setTpms4 = function(fl, fr, rl, rr){
+  tpmsState.fl = fl;
+  tpmsState.fr = fr;
+  tpmsState.rl = rl;
+  tpmsState.rr = rr;
+  refreshTpmsDisplay();
+};
+
+setVehicleMode(selectedVehicle);
+if(selectedNavPkg === 'gmaps'){
+  loadGoogleMapsInterface('', activeOriginText);
+}
+</script>
+</body></html>
